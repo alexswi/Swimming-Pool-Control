@@ -18,6 +18,9 @@
 #define RELAY1 21
 #define RELAY2 22
 
+hw_timer_t *timer = NULL;
+const int wdtTimeout = 5000; 
+
 
 bool pump1State = false;
 bool pump2State = false;
@@ -25,6 +28,7 @@ bool blinkState = false;
 
 
 WiFiMulti wifiMulti;
+unsigned long wifi_WatchdogLastUpdate;
 
 IPAddress local_IP(10, 1, 1, 81);
 IPAddress gateway(10, 1, 1, 1);
@@ -58,6 +62,11 @@ void testdrawtext(char *text, uint16_t color) {
   tft.setTextColor(color);
   tft.setTextWrap(true);
   tft.print(text);
+}
+
+void IRAM_ATTR resetModule() {
+  ets_printf("reboot\n");
+  esp_restart();
 }
 
 void blink(){
@@ -152,6 +161,7 @@ void setup() {
       Serial.print(".");
       tft.print(".");
     }
+    wifi_WatchdogLastUpdate = millis();
     delay(500);
     tft.println("");
     tft.print(WiFi.SSID());
@@ -224,16 +234,27 @@ void setup() {
   server.begin();    
   tft.fillScreen(ST7735_BLACK);
   tftPrintLables();
+  timer = timerBegin(0, 80, true);                  //timer 0, div 80
+  timerAttachInterrupt(timer, &resetModule, true);  //attach callback
+  timerAlarmWrite(timer, wdtTimeout * 1000, false); //set time in us
+  timerAlarmEnable(timer);                          //enable interrupt  
   Serial.println("done");
   delay(200);    
 }
 
 void loop() {
+  timerWrite(timer, 0); //reset timer (feed watchdog)
   if(millis()-lastUpdate>500){
     blink();
     lastUpdate=millis();
     tftUpdateTemp();
   }
+  if(millis()-wifi_WatchdogLastUpdate>600000){
+    if(wifiMulti.run() != WL_CONNECTED) {
+        Serial.println("WiFi not connected!");
+    }
+    wifi_WatchdogLastUpdate=millis();
+  }  
   server.handleClient();
   delay(1);    
 }
