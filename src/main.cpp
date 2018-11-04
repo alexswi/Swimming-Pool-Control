@@ -7,6 +7,8 @@
 #include <WiFiClient.h>
 #include <WebServer.h>
 #include <Update.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
 
 #include "WebPages.h"
 #include "wifiCredentials.h"
@@ -26,9 +28,16 @@ bool pump1State = false;
 bool pump2State = false;
 bool blinkState = false;
 
+StaticJsonBuffer<500> JSONBuffer;
+
 
 WiFiMulti wifiMulti;
 unsigned long wifi_WatchdogLastUpdate;
+WiFiClient espClient;
+PubSubClient client(espClient);
+long lastMsg = 0;
+char msg[50];
+int value = 0;
 
 IPAddress local_IP(10, 1, 1, 81);
 IPAddress gateway(10, 1, 1, 1);
@@ -53,8 +62,19 @@ Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCLK, TFT_RS
 
 float p = 3.1415926;
 unsigned long lastUpdate;
+long lastReconnectAttempt = 0;
+float waterTemp = 0;
 
 WebServer server(80);
+
+boolean reconnect() {
+  Serial.print("Attempting MQTT connection...");
+  if (client.connect("Swimming")) {
+    Serial.println("connected");
+    client.subscribe("tele/Mangueira/SENSOR");
+  }
+  return client.connected();
+}
 
 
 void testdrawtext(char *text, uint16_t color) {
@@ -82,7 +102,7 @@ void tftUpdateTemp() {
     tft.setTextColor(ST7735_GREEN,ST7735_BLACK);
     tft.setTextSize(2);
     tft.setCursor(80, 2);
-    tft.print(11.1);
+    tft.print(waterTemp);
     tft.setCursor(80, 20);
     tft.print(22.2);
     tft.setCursor(80, 38);
@@ -137,6 +157,32 @@ void printMessage(char *text){
   tft.print(text);
 }
 
+
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Message arrived:");
+//  const char* json = "{\"Time\":\"2018-11-04T19:20:43\",\"DS18B20\":{\"Temperature\":28.6},\"TempUnit\":\"C\"}";
+  JsonObject& parsed = JSONBuffer.parseObject(payload); //Parse message
+  if (parsed.success()) { 
+    const char* time = parsed["Time"]; // "2018-11-04T19:20:43"
+    float temperature = parsed["DS18B20"]["Temperature"];     
+    Serial.print("Temperature:");
+    Serial.println(temperature);
+    waterTemp = temperature;
+    Serial.print("time:");
+    Serial.println(time);
+  } else {
+    Serial.println("Parse error");
+    Serial.print("Message arrived [");
+    Serial.print(topic);
+    Serial.print("] ");
+    for (int i = 0; i < length; i++) {
+      Serial.print((char)payload[i]);
+    }
+    Serial.println();
+  }
+}
+
+
 void setup() {
     Serial.begin(9600);
     Serial.print("");
@@ -163,6 +209,7 @@ void setup() {
     }
     wifi_WatchdogLastUpdate = millis();
     delay(500);
+    randomSeed(micros());
     tft.println("");
     tft.print(WiFi.SSID());
     tft.print(" ");
@@ -234,10 +281,13 @@ void setup() {
   server.begin();    
   tft.fillScreen(ST7735_BLACK);
   tftPrintLables();
+  client.setServer(mqtt_server, 1883);
+  client.setCallback(mqttCallback);
   timer = timerBegin(0, 80, true);                  //timer 0, div 80
   timerAttachInterrupt(timer, &resetModule, true);  //attach callback
   timerAlarmWrite(timer, wdtTimeout * 1000, false); //set time in us
   timerAlarmEnable(timer);                          //enable interrupt  
+   lastReconnectAttempt = 0;
   Serial.println("done");
   delay(200);    
 }
@@ -254,6 +304,19 @@ void loop() {
         Serial.println("WiFi not connected!");
     }
     wifi_WatchdogLastUpdate=millis();
+  }
+if (!client.connected()) {
+    long now = millis();
+    if (now - lastReconnectAttempt > 5000) {
+      lastReconnectAttempt = now;
+      // Attempt to reconnect
+      if (reconnect()) {
+        lastReconnectAttempt = 0;
+      }
+    }
+  } else {
+    // Client connected
+    client.loop();
   }  
   server.handleClient();
   delay(1);    
