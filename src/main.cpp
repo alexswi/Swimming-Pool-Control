@@ -8,17 +8,18 @@
 #include <WebServer.h>
 #include <Update.h>
 #include <PubSubClient.h>
-#include <ArduinoJson.h>
+
 
 #include "WebPages.h"
 #include "wifiCredentials.h"
+#include "mqtt.h"
+#include "relay.h"
+
 
 #define BUTTON_A_PIN 39
 #define BUTTON_B_PIN 35
 #define BUTTON_C_PIN 34
 
-#define RELAY1 21
-#define RELAY2 22
 
 hw_timer_t *timer = NULL;
 const int wdtTimeout = 5000; 
@@ -28,16 +29,17 @@ bool pump1State = false;
 bool pump2State = false;
 bool blinkState = false;
 
-StaticJsonBuffer<500> JSONBuffer;
+
 
 
 WiFiMulti wifiMulti;
 unsigned long wifi_WatchdogLastUpdate;
-WiFiClient espClient;
-PubSubClient client(espClient);
 long lastMsg = 0;
 char msg[50];
 int value = 0;
+WiFiClient espClient;
+PubSubClient client(espClient);
+
 
 IPAddress local_IP(10, 1, 1, 81);
 IPAddress gateway(10, 1, 1, 1);
@@ -63,18 +65,9 @@ Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCLK, TFT_RS
 float p = 3.1415926;
 unsigned long lastUpdate;
 long lastReconnectAttempt = 0;
-float waterTemp = 0;
+float waterTemp =0;
 
 WebServer server(80);
-
-boolean reconnect() {
-  Serial.print("Attempting MQTT connection...");
-  if (client.connect("Swimming")) {
-    Serial.println("connected");
-    client.subscribe("tele/Mangueira/SENSOR");
-  }
-  return client.connected();
-}
 
 
 void testdrawtext(char *text, uint16_t color) {
@@ -138,16 +131,7 @@ void tftPrintLables() {
     tft.print("Pump:");
 }
 
-void PumpSet(u_char pump,bool on){
-  if(pump==1){
-    pump1State = on; 
-    digitalWrite(RELAY1,!on);
-  }
-  if(pump==2){
-    pump2State = on; 
-    digitalWrite(RELAY2,!on);
-  }
-}
+
 
 void printMessage(char *text){
   tft.setTextWrap(false);
@@ -158,29 +142,7 @@ void printMessage(char *text){
 }
 
 
-void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  Serial.print("Message arrived:");
-//  const char* json = "{\"Time\":\"2018-11-04T19:20:43\",\"DS18B20\":{\"Temperature\":28.6},\"TempUnit\":\"C\"}";
-  JsonObject& parsed = JSONBuffer.parseObject(payload); //Parse message
-  if (parsed.success()) { 
-    const char* time = parsed["Time"]; // "2018-11-04T19:20:43"
-    float temperature = parsed["DS18B20"]["Temperature"];     
-    Serial.print("Temperature:");
-    Serial.println(temperature);
-    waterTemp = temperature;
-    Serial.print("time:");
-    Serial.println(time);
-  } else {
-    Serial.println("Parse error");
-    Serial.print("Message arrived [");
-    Serial.print(topic);
-    Serial.print("] ");
-    for (int i = 0; i < length; i++) {
-      Serial.print((char)payload[i]);
-    }
-    Serial.println();
-  }
-}
+
 
 
 void setup() {
@@ -310,7 +272,7 @@ if (!client.connected()) {
     if (now - lastReconnectAttempt > 5000) {
       lastReconnectAttempt = now;
       // Attempt to reconnect
-      if (reconnect()) {
+      if (reconnect(client)) {
         lastReconnectAttempt = 0;
       }
     }
