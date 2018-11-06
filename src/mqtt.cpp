@@ -1,8 +1,12 @@
 #include <ArduinoJson.h>
+#include <WiFi.h>
 #include "mqtt.h"
 #include "relay.h"
+#include "wifiHelper.h"
+
 
 const char *stat_SwimmingPool_POWER = "stat/SwimmingPool/POWER";
+char json_data[JSON_MAX]; 
 
 boolean reconnect(PubSubClient client)
 {
@@ -14,6 +18,18 @@ boolean reconnect(PubSubClient client)
         client.subscribe(stat_SwimmingPool_POWER);
     }
     return client.connected();
+}
+
+void statBuild()
+{
+    StaticJsonBuffer<200> jsonBuffer;
+    JsonObject &root = jsonBuffer.createObject();
+    root["port1"] = pump1State;
+    root["port2"] = pump2State;
+    root["waterTemp"] = waterTemp;
+    root["wifiQuality"] = WifiGetRssiAsQuality(WiFi.RSSI());
+    root["ssid"] =  WiFi.SSID();
+    root.printTo(json_data);
 }
 
 void mqttCallback(char *topic, byte *payload, unsigned int length)
